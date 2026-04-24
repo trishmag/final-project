@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DC Public Employee Salary — Interactive Graphs</title>
+  <meta name="description" content="Interactive visualizations of DC Public Employee Salary data featuring salary-by-agency and salary distribution charts." />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0b0f19;
+      --surface: rgba(255,255,255,0.04);
+      --surface-hover: rgba(255,255,255,0.08);
+      --border: rgba(255,255,255,0.08);
+      --text: #e4e6ef;
+      --text-muted: #8b8fa3;
+      --accent: #6c63ff;
+      --accent2: #00d2ff;
+      --accent3: #ff6584;
+      --gradient: linear-gradient(135deg, #6c63ff 0%, #00d2ff 100%);
+      --card-radius: 20px;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Animated background blobs */
+    .bg-blob {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: .18;
+      z-index: 0;
+      pointer-events: none;
+      animation: float 18s ease-in-out infinite alternate;
+    }
+    .bg-blob.one   { width: 600px; height: 600px; background: var(--accent);  top: -10%; left: -10%; }
+    .bg-blob.two   { width: 500px; height: 500px; background: var(--accent2); bottom: -10%; right: -5%; animation-delay: -6s; }
+    .bg-blob.three { width: 400px; height: 400px; background: var(--accent3); top: 40%; left: 50%; animation-delay: -12s; }
+
+    @keyframes float {
+      0%   { transform: translate(0, 0) scale(1); }
+      100% { transform: translate(40px, -30px) scale(1.12); }
+    }
+
+    /* Layout */
+    .container {
+      position: relative;
+      z-index: 1;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 56px;
+    }
+
+    header h1 {
+      font-size: clamp(1.8rem, 4vw, 2.8rem);
+      font-weight: 800;
+      background: var(--gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -0.03em;
+    }
+
+    header p {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      margin-top: 10px;
+      font-weight: 400;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 36px;
+    }
+
+    @media (min-width: 960px) {
+      .grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    /* Glass Card */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--card-radius);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      padding: 32px 28px 24px;
+      transition: transform .3s ease, box-shadow .3s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: var(--card-radius);
+      pointer-events: none;
+      background: linear-gradient(135deg, rgba(108,99,255,.08) 0%, transparent 60%);
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 40px rgba(108,99,255,.12);
+    }
+
+    .card-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .card-title .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .card-subtitle {
+      color: var(--text-muted);
+      font-size: .85rem;
+      margin-bottom: 20px;
+    }
+
+    /* Controls */
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+    }
+
+    select, button {
+      font-family: 'Inter', sans-serif;
+      font-size: .85rem;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 16px;
+      background: var(--surface-hover);
+      color: var(--text);
+      cursor: pointer;
+      transition: all .25s ease;
+      outline: none;
+    }
+
+    select:hover, button:hover {
+      background: rgba(108,99,255,.18);
+      border-color: var(--accent);
+    }
+
+    select:focus, button:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(108,99,255,.2);
+    }
+
+    button.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .chart-wrap {
+      position: relative;
+      width: 100%;
+      height: 380px;
+    }
+
+    canvas { width: 100% !important; }
+
+    /* Loading spinner */
+    .loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 380px;
+      gap: 8px;
+      color: var(--text-muted);
+      font-size: .9rem;
+    }
+
+    .spinner {
+      width: 24px; height: 24px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Stats row */
+    .stats-row {
+      display: flex;
+      gap: 16px;
+      margin-top: 16px;
+      flex-wrap: wrap;
+    }
+
+    .stat-chip {
+      background: var(--surface-hover);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 16px;
+      flex: 1;
+      min-width: 100px;
+      text-align: center;
+      transition: background .25s;
+    }
+
+    .stat-chip:hover { background: rgba(108,99,255,.1); }
+    .stat-chip .label { font-size: .72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
+    .stat-chip .value { font-size: 1.15rem; font-weight: 700; margin-top: 2px; }
+    .stat-chip .value.accent  { color: var(--accent); }
+    .stat-chip .value.accent2 { color: var(--accent2); }
+    .stat-chip .value.accent3 { color: var(--accent3); }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: .78rem;
+      margin-top: 56px;
+      opacity: .7;
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-blob one"></div>
+  <div class="bg-blob two"></div>
+  <div class="bg-blob three"></div>
+
+  <div class="container">
+    <header>
+      <h1>DC Public Employee Salary Explorer</h1>
+      <p>Interactive visualizations — 40,000+ records at your fingertips</p>
+    </header>
+
+    <div class="grid">
+      <!-- GRAPH 1 ─ Avg Salary by Agency -->
+      <div class="card" id="card1">
+        <div class="card-title"><span class="dot" style="background:var(--accent)"></span>Average Salary by Agency</div>
+        <p class="card-subtitle">Top agencies ranked by average compensation rate. Click a bar to explore.</p>
+        <div class="controls">
+          <button id="btnTop10" class="active" onclick="setAgencyCount(10)">Top 10</button>
+          <button id="btnTop20" onclick="setAgencyCount(20)">Top 20</button>
+          <button id="btnAll" onclick="setAgencyCount(999)">All</button>
+          <select id="sortOrder">
+            <option value="desc">Highest First</option>
+            <option value="asc">Lowest First</option>
+            <option value="count">By Headcount</option>
+          </select>
+        </div>
+        <div class="chart-wrap"><canvas id="chart1"></canvas></div>
+        <div class="loading" id="loading1"><div class="spinner"></div> Loading data…</div>
+        <div class="stats-row" id="stats1" style="display:none">
+          <div class="stat-chip"><div class="label">Agencies</div><div class="value accent" id="statAgencies">—</div></div>
+          <div class="stat-chip"><div class="label">Highest Avg</div><div class="value accent2" id="statHighest">—</div></div>
+          <div class="stat-chip"><div class="label">Overall Avg</div><div class="value accent3" id="statOverall">—</div></div>
+        </div>
+      </div>
+
+      <!-- GRAPH 2 ─ Salary Distribution -->
+      <div class="card" id="card2">
+        <div class="card-title"><span class="dot" style="background:var(--accent2)"></span>Salary Distribution</div>
+        <p class="card-subtitle">Histogram of compensation rates. Filter by agency or appointment type.</p>
+        <div class="controls">
+          <select id="agencyFilter"><option value="all">All Agencies</option></select>
+          <select id="apptFilter"><option value="all">All Appointment Types</option></select>
+          <select id="binSize">
+            <option value="5000">$5K bins</option>
+            <option value="10000" selected>$10K bins</option>
+            <option value="20000">$20K bins</option>
+          </select>
+        </div>
+        <div class="chart-wrap"><canvas id="chart2"></canvas></div>
+        <div class="loading" id="loading2"><div class="spinner"></div> Loading data…</div>
+        <div class="stats-row" id="stats2" style="display:none">
+          <div class="stat-chip"><div class="label">Employees</div><div class="value accent" id="statCount">—</div></div>
+          <div class="stat-chip"><div class="label">Median</div><div class="value accent2" id="statMedian">—</div></div>
+          <div class="stat-chip"><div class="label">Std Dev</div><div class="value accent3" id="statStd">—</div></div>
+        </div>
+      </div>
+    </div>
+
+    <footer>Data: DC Public Employee Salary Dataset &bull; Built with Chart.js</footer>
+  </div>
+
+<script>
+/* ─── Globals ─── */
+let rawData = [];
+let agencyMap = {};       // { agency: [comprate, …] }
+let apptTypes = new Set();
+let chart1Instance, chart2Instance;
+let currentAgencyCount = 10;
+
+/* ─── Colour helpers ─── */
+const palette = [
+  'rgba(108,99,255,.82)', 'rgba(0,210,255,.82)', 'rgba(255,101,132,.82)',
+  'rgba(255,206,86,.82)', 'rgba(75,192,192,.82)', 'rgba(153,102,255,.82)',
+  'rgba(255,159,64,.82)', 'rgba(54,162,235,.82)', 'rgba(255,99,132,.82)',
+  'rgba(201,203,207,.82)'
+];
+function gradientBar(ctx, chartArea, idx) {
+  const g = ctx.createLinearGradient(chartArea.left, 0, chartArea.right, 0);
+  const c1 = palette[idx % palette.length];
+  const c2 = palette[(idx + 3) % palette.length];
+  g.addColorStop(0, c1);
+  g.addColorStop(1, c2);
+  return g;
+}
+
+/* ─── Formatting ─── */
+const fmt = v => '$' + Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
+
+/* ─── Load & Parse CSV ─── */
+Papa.parse('DC_Public_Employee_Salary.csv', {
+  download: true, header: true, skipEmptyLines: true,
+  complete(results) {
+    rawData = results.data
+      .map(r => ({
+        agency: (r.DESCRSHORT || '').trim(),
+        salary: parseFloat(r.COMPRATE),
+        title: (r.JOBTITLE || '').trim(),
+        appt: (r.GVT_TYPE_OF_APPT || '').trim()
+      }))
+      .filter(d => d.agency && !isNaN(d.salary) && d.salary > 100);   // filter hourly-rate outliers
+
+    // Build agency map
+    rawData.forEach(d => {
+      if (!agencyMap[d.agency]) agencyMap[d.agency] = [];
+      agencyMap[d.agency].push(d.salary);
+      if (d.appt) apptTypes.add(d.appt);
+    });
+
+    populateFilters();
+    renderChart1();
+    renderChart2();
+  }
+});
+
+/* ─── Populate dropdowns ─── */
+function populateFilters() {
+  const agSel = document.getElementById('agencyFilter');
+  Object.keys(agencyMap).sort().forEach(ag => {
+    const o = document.createElement('option');
+    o.value = ag; o.textContent = ag;
+    agSel.appendChild(o);
+  });
+
+  const apSel = document.getElementById('apptFilter');
+  [...apptTypes].sort().forEach(ap => {
+    const o = document.createElement('option');
+    o.value = ap; o.textContent = ap;
+    apSel.appendChild(o);
+  });
+
+  agSel.addEventListener('change', renderChart2);
+  apSel.addEventListener('change', renderChart2);
+  document.getElementById('binSize').addEventListener('change', renderChart2);
+  document.getElementById('sortOrder').addEventListener('change', renderChart1);
+}
+
+/* ═══════════════════════════════════════
+   CHART 1 — Avg Salary by Agency
+   ═══════════════════════════════════════ */
+function setAgencyCount(n) {
+  currentAgencyCount = n;
+  document.querySelectorAll('#card1 button').forEach(b => b.classList.remove('active'));
+  if (n === 10) document.getElementById('btnTop10').classList.add('active');
+  else if (n === 20) document.getElementById('btnTop20').classList.add('active');
+  else document.getElementById('btnAll').classList.add('active');
+  renderChart1();
+}
+
+function renderChart1() {
+  document.getElementById('loading1').style.display = 'none';
+  document.getElementById('stats1').style.display = 'flex';
+
+  const sortOrder = document.getElementById('sortOrder').value;
+
+  let entries = Object.entries(agencyMap).map(([ag, salaries]) => ({
+    agency: ag,
+    avg: salaries.reduce((a,b) => a + b, 0) / salaries.length,
+    count: salaries.length
+  }));
+
+  if (sortOrder === 'asc') entries.sort((a,b) => a.avg - b.avg);
+  else if (sortOrder === 'count') entries.sort((a,b) => b.count - a.count);
+  else entries.sort((a,b) => b.avg - a.avg);
+
+  entries = entries.slice(0, currentAgencyCount);
+
+  // Stats
+  const allAvg = rawData.reduce((s,d) => s + d.salary, 0) / rawData.length;
+  document.getElementById('statAgencies').textContent = Object.keys(agencyMap).length;
+  document.getElementById('statHighest').textContent = fmt(entries[0]?.avg || 0);
+  document.getElementById('statOverall').textContent = fmt(allAvg);
+
+  const labels = entries.map(e => e.agency);
+  const data = entries.map(e => Math.round(e.avg));
+
+  if (chart1Instance) chart1Instance.destroy();
+
+  const ctx = document.getElementById('chart1').getContext('2d');
+  chart1Instance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Avg Salary',
+        data,
+        backgroundColor(context) {
+          const chart = context.chart;
+          const { ctx: c, chartArea } = chart;
+          if (!chartArea) return palette[context.dataIndex % palette.length];
+          return gradientBar(c, chartArea, context.dataIndex);
+        },
+        borderRadius: 8,
+        borderSkipped: false,
+        barPercentage: 0.7,
+        categoryPercentage: 0.75
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 800, easing: 'easeOutQuart' },
+      interaction: { mode: 'nearest', axis: 'y', intersect: true },
+      onClick(e, els) {
+        if (els.length) {
+          const idx = els[0].index;
+          const ag = labels[idx];
+          document.getElementById('agencyFilter').value = ag;
+          renderChart2();
+          document.getElementById('card2').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(15,18,30,.92)',
+          titleFont: { family: 'Inter', weight: '600' },
+          bodyFont: { family: 'Inter' },
+          padding: 14,
+          cornerRadius: 10,
+          callbacks: {
+            label: ctx => `  ${fmt(ctx.parsed.x)}`,
+            afterLabel: ctx => `  Employees: ${entries[ctx.dataIndex].count.toLocaleString()}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: 'rgba(255,255,255,.04)' },
+          ticks: { color: '#8b8fa3', font: { family: 'Inter', size: 11 }, callback: v => fmt(v) }
+        },
+        y: {
+          grid: { display: false },
+          ticks: { color: '#c5c8d8', font: { family: 'Inter', size: 11, weight: '500' } }
+        }
+      }
+    }
+  });
+}
+
+/* ═══════════════════════════════════════
+   CHART 2 — Salary Distribution
+   ═══════════════════════════════════════ */
+function renderChart2() {
+  document.getElementById('loading2').style.display = 'none';
+  document.getElementById('stats2').style.display = 'flex';
+
+  const agFilter = document.getElementById('agencyFilter').value;
+  const apFilter = document.getElementById('apptFilter').value;
+  const binSize  = parseInt(document.getElementById('binSize').value);
+
+  let filtered = rawData;
+  if (agFilter !== 'all') filtered = filtered.filter(d => d.agency === agFilter);
+  if (apFilter !== 'all') filtered = filtered.filter(d => d.appt === apFilter);
+
+  const salaries = filtered.map(d => d.salary).sort((a,b) => a - b);
+  if (!salaries.length) { updateStats2([]); return; }
+
+  const maxSal = Math.min(Math.ceil(salaries[salaries.length - 1] / binSize) * binSize, 300000);
+  const bins = [];
+  const counts = [];
+
+  for (let lo = 0; lo < maxSal; lo += binSize) {
+    bins.push(`${fmt(lo)}–${fmt(lo + binSize)}`);
+    counts.push(salaries.filter(s => s >= lo && s < lo + binSize).length);
+  }
+  // overflow bin
+  const overflow = salaries.filter(s => s >= maxSal).length;
+  if (overflow) { bins.push(`${fmt(maxSal)}+`); counts.push(overflow); }
+
+  updateStats2(salaries);
+
+  if (chart2Instance) chart2Instance.destroy();
+
+  const ctx = document.getElementById('chart2').getContext('2d');
+
+  chart2Instance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: bins,
+      datasets: [{
+        label: 'Employees',
+        data: counts,
+        backgroundColor(context) {
+          const chart = context.chart;
+          const { ctx: c, chartArea } = chart;
+          if (!chartArea) return 'rgba(0,210,255,.7)';
+          const g = c.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+          g.addColorStop(0, 'rgba(108,99,255,.75)');
+          g.addColorStop(1, 'rgba(0,210,255,.85)');
+          return g;
+        },
+        borderRadius: { topLeft: 6, topRight: 6 },
+        borderSkipped: false,
+        barPercentage: 0.92,
+        categoryPercentage: 0.92
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 700, easing: 'easeOutQuart' },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(15,18,30,.92)',
+          titleFont: { family: 'Inter', weight: '600' },
+          bodyFont: { family: 'Inter' },
+          padding: 14,
+          cornerRadius: 10,
+          callbacks: {
+            label: ctx => `  ${ctx.parsed.y.toLocaleString()} employees`
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: {
+            color: '#8b8fa3',
+            font: { family: 'Inter', size: 10 },
+            maxRotation: 55,
+            minRotation: 35
+          }
+        },
+        y: {
+          grid: { color: 'rgba(255,255,255,.04)' },
+          ticks: { color: '#8b8fa3', font: { family: 'Inter', size: 11 } }
+        }
+      }
+    }
+  });
+}
+
+function updateStats2(salaries) {
+  document.getElementById('statCount').textContent = salaries.length.toLocaleString();
+  if (!salaries.length) {
+    document.getElementById('statMedian').textContent = '—';
+    document.getElementById('statStd').textContent = '—';
+    return;
+  }
+  const mid = Math.floor(salaries.length / 2);
+  const median = salaries.length % 2 ? salaries[mid] : (salaries[mid-1] + salaries[mid]) / 2;
+  const mean = salaries.reduce((a,b) => a + b, 0) / salaries.length;
+  const std = Math.sqrt(salaries.reduce((s,v) => s + (v - mean) ** 2, 0) / salaries.length);
+  document.getElementById('statMedian').textContent = fmt(median);
+  document.getElementById('statStd').textContent = fmt(std);
+}
+</script>
+</body>
+</html>
